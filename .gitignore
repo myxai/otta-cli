@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+apps/__pycache__/
+myxai_desk/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+docs/
+tests/
+.github/
+train/
+runtime/
+tools/
+
+examples/
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# Linting & Type Checking
+.ruff_cache/
+.pyright/
+.mypy_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build & Distribution
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Environment
+.env
+.venv/
+venv/
+ENV/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RouterOutputV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "route",
+    "risk",
+    "need_confirm",
+    "case_key",
+    "slots"
+  ],
+  "properties": {
+    "route": {
+      "type": "string",
+      "enum": [
+        "direct",
+        "replay",
+        "cloud",
+        "block"
+      ]
+    },
+    "risk": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "need_confirm": {
+      "type": "boolean"
+    },
+    "case_key": {
+      "type": "string",
+      "minLength": 6,
+      "maxLength": 96
+    },
+    "direct_id": {
+      "type": "string"
+    },
+    "slots": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "null"
+        ]
+      },
+      "maxProperties": 12
+    }
+  }
+}
