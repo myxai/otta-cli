@@ -1,6 +1,6 @@
 from __future__ import annotations
 import time, json
-from typing import Any, Dict
+from typing import Any, Dict, Set
 
 from store.db import Store
 from plans.runner import run_plan_with_nanobot
@@ -8,13 +8,24 @@ from plans.parameterize import parameterize_plan
 from cloud.compiler import compile_plan
 from nanobot_bridge.capabilities import build_capabilities
 
+_cap_cache: Set[str] | None = None
+
 def _allowed_caps(agent) -> list[str]:
+    global _cap_cache
     ws = str(getattr(agent, "workspace", "."))
     caps = build_capabilities(agent, ws)["capabilities"]
     names = [c["name"] for c in caps]
+    _cap_cache = set(names)
     return names[:180]
 
-def run_once(user_text: str, *, db_path: str = "otta_min.db", router, agent, provider) -> Dict[str, Any]:
+def _is_valid_capability(agent, cap_name: str) -> bool:
+    """检查 capability 是否真实存在"""
+    global _cap_cache
+    if _cap_cache is None:
+        _allowed_caps(agent)
+    return cap_name in _cap_cache
+
+def run_once(user_text: str, *, db_path: str = "runtime/otta_min.db", router, agent, provider) -> Dict[str, Any]:
     store = Store(db_path)
     store.init()
 
@@ -43,13 +54,17 @@ def run_once(user_text: str, *, db_path: str = "otta_min.db", router, agent, pro
 
     # direct as 1-step plan via nanobot
     if r["route"] == "direct" and r.get("direct_id"):
-        plan = {"template_id":"direct."+r["direct_id"], "steps":[{"capability": r["direct_id"], "args": slots}], "_risk": r["risk"]}
-        ok, result, eff, stage = run_plan_with_nanobot(agent, plan, slots)
-        store.log_run(case_key, "direct", "direct", ok, int((time.time()-t0)*1000), eff, False, stage)
-        if ok:
-            store.update_capability_graph_from_plan(plan)
-            return {"ok": True, "route":"direct", "result": result}
-        print("[direct_fail] -> cloud", json.dumps(result, ensure_ascii=False))
+        direct_id = r["direct_id"]
+        if _is_valid_capability(agent, direct_id):
+            plan = {"template_id":"direct."+direct_id, "steps":[{"capability": direct_id, "args": slots}], "_risk": r["risk"]}
+            ok, result, eff, stage = run_plan_with_nanobot(agent, plan, slots)
+            store.log_run(case_key, "direct", "direct", ok, int((time.time()-t0)*1000), eff, False, stage)
+            if ok:
+                store.update_capability_graph_from_plan(plan)
+                return {"ok": True, "route":"direct", "result": result}
+            print("[direct_fail] -> cloud", json.dumps(result, ensure_ascii=False))
+        else:
+            print(f"[direct_skip] tool '{direct_id}' not found, falling back to cloud")
 
     # cloud compile candidate plan via nanobot provider (with capability whitelist)
     allowed_caps = _allowed_caps(agent)

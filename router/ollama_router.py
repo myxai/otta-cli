@@ -1,8 +1,12 @@
 from __future__ import annotations
-import os, json, urllib.request
+import os, json, urllib.request, sys
+from pathlib import Path
 from typing import Any, Dict
 from .json_utils import best_effort_json, validate_router
-from .llamacpp_router import ROUTER_SYS
+
+# 导入统一的 Prompt 管理器
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from train.prompt_manager import PromptManager
 
 def _post_json(url: str, payload: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -12,12 +16,18 @@ def _post_json(url: str, payload: Dict[str, Any], timeout: int = 30) -> Dict[str
     return json.loads(raw)
 
 class OllamaRouter:
-    def __init__(self, base_url: str, model: str):
+    def __init__(self, base_url: str, model: str, verbose: bool = False, cap_file: str = None, topn: int = 60):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.verbose = verbose
+        # 使用统一的 Prompt 管理器
+        self.pm = PromptManager(cap_file, topn)
 
     def predict(self, user_text: str) -> Dict[str, Any]:
-        prompt = ROUTER_SYS + "\n用户: " + user_text + "\n输出JSON: "
+        # 使用统一的 ChatML 格式
+        prompt = self.pm.build_chatml(user_text)
+        if self.verbose:
+            print(f"[router-prompt]\n{prompt}")
         url = self.base_url + "/api/generate"
         payload = {
             "model": self.model,
@@ -26,15 +36,24 @@ class OllamaRouter:
             "options": {
                 "temperature": 0.0,
                 "num_predict": 256,
-                "stop": ["\n\n", "```"],
+                "stop": ["<|im_end|>"],
             },
         }
         out = _post_json(url, payload, timeout=int(os.environ.get("OTTA_OLLAMA_TIMEOUT","30")))
         text = out.get("response","") if isinstance(out, dict) else str(out)
-        obj = best_effort_json(text)
-        return validate_router(obj)
+        if self.verbose:
+            print(f"[router-raw-output]\n{text}")
+        try:
+            obj = best_effort_json(text)
+            return validate_router(obj)
+        except (ValueError, Exception) as e:
+            if self.verbose:
+                print(f"[router-parse-error] {e}")
+            raise
 
 def from_env() -> "OllamaRouter":
     base_url = os.environ.get("OTTA_OLLAMA_URL","http://127.0.0.1:11434").strip()
     model = os.environ.get("OTTA_OLLAMA_MODEL","qwen2.5:0.5b-instruct").strip()
-    return OllamaRouter(base_url, model)
+    cap_file = os.environ.get("OTTA_CAP_FILE","").strip() or None
+    topn = int(os.environ.get("OTTA_CAP_TOPN","60"))
+    return OllamaRouter(base_url, model, cap_file=cap_file, topn=topn)

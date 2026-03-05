@@ -183,6 +183,26 @@ export OTTA_ROUTER_FALLBACKS=py,ollama,cli  # 默认配置
 
 ---
 
+## 📖 文档
+
+完整文档位于 [docs](docs/) 目录：
+
+- **[配置指南](docs/CONFIGURATION.md)** - 详细的配置说明
+- **[架构文档](docs/ARCHITECTURE.md)** - 系统设计和组件
+- **[训练指南](docs/TRAINING.md)** - 训练自定义路由模型
+- **[多卡训练](docs/MULTI_GPU_TRAINING.md)** - 多 GPU 加速训练
+- **[llama.cpp 指南](docs/LLAMA_CPP.md)** - llama.cpp 编译和使用 ⭐
+- **[API 参考](docs/API.md)** - 代码接口文档
+- **[故障排查](docs/TROUBLESHOOTING.md)** - 常见问题解决
+
+快速链接：
+- [配置 LLM API Key](docs/CONFIGURATION.md#nanobot-配置详解)
+- [训练路由器](docs/TRAINING.md)
+- [llama.cpp 新版编译](docs/LLAMA_CPP.md) ⭐
+- [理解架构](docs/ARCHITECTURE.md)
+
+---
+
 ## 🚀 快速开始
 
 ### 单命令模式

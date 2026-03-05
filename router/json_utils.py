@@ -17,7 +17,24 @@ def best_effort_json(raw: str) -> Dict[str, Any]:
     raise ValueError("router output is not json")
 
 def validate_router(obj: Dict[str, Any]) -> Dict[str, Any]:
-    validate(instance=obj, schema=SCHEMA)
-    obj.setdefault("direct_id","")
-    obj.setdefault("slots",{})
+    """验证路由器输出，并提供友好的错误处理"""
+    try:
+        validate(instance=obj, schema=SCHEMA)
+    except Exception as e:
+        # 提供更友好的错误信息
+        import sys
+        print(f"[WARN] Router output validation failed: {e}", file=sys.stderr)
+        print(f"[WARN] Raw output: {obj}", file=sys.stderr)
+        
+        # 尝试修复常见问题
+        if "case_key" in obj and isinstance(obj["case_key"], str):
+            # case_key 太短，添加前缀
+            if len(obj["case_key"]) < 1:
+                obj["case_key"] = "unknown"
+        
+        # 重新验证
+        validate(instance=obj, schema=SCHEMA)
+    
+    obj.setdefault("direct_id", "")
+    obj.setdefault("slots", {})
     return obj

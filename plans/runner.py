@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Any, Dict, Tuple
+import asyncio
 
 def _render(x: Any, slots: Dict[str, Any]) -> Any:
     if isinstance(x, str):
@@ -13,8 +14,8 @@ def _render(x: Any, slots: Dict[str, Any]) -> Any:
         return [_render(i, slots) for i in x]
     return x
 
-def run_plan_with_nanobot(agent, plan: Dict[str, Any], slots: Dict[str, Any]) -> Tuple[bool, Dict[str, Any], int, str]:
-    """Execute plan steps via nanobot tools.execute().
+async def run_plan_with_nanobot_async(agent, plan: Dict[str, Any], slots: Dict[str, Any]) -> Tuple[bool, Dict[str, Any], int, str]:
+    """Execute plan steps via nanobot tools.execute() (async version).
 
     Preferred step schema:
       {"capability": "name", "args": {...}}
@@ -37,7 +38,8 @@ def run_plan_with_nanobot(agent, plan: Dict[str, Any], slots: Dict[str, Any]) ->
         if not isinstance(args, dict):
             return False, {"error":"args_not_object","step":idx}, eff, f"step{idx}"
         try:
-            out = agent.tools.execute(cap, args)
+            # Await the coroutine
+            out = await agent.tools.execute(cap, args)
         except Exception as e:
             return False, {"error":"tool_execute_failed","capability":cap,"detail":str(e)}, eff, f"step{idx}"
 
@@ -52,3 +54,25 @@ def run_plan_with_nanobot(agent, plan: Dict[str, Any], slots: Dict[str, Any]) ->
         eff += 1
 
     return True, result, eff, ""
+
+def run_plan_with_nanobot(agent, plan: Dict[str, Any], slots: Dict[str, Any]) -> Tuple[bool, Dict[str, Any], int, str]:
+    """Synchronous wrapper for run_plan_with_nanobot_async.
+    
+    This function runs the async version in a new event loop or the current one if available.
+    """
+    try:
+        # Try to get the current event loop
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # We're already in an async context, but called from sync code
+            # Create a new event loop in a thread (not ideal but works)
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, run_plan_with_nanobot_async(agent, plan, slots))
+                return future.result()
+        else:
+            # No loop running, we can use run_until_complete
+            return loop.run_until_complete(run_plan_with_nanobot_async(agent, plan, slots))
+    except RuntimeError:
+        # No event loop, create one
+        return asyncio.run(run_plan_with_nanobot_async(agent, plan, slots))
