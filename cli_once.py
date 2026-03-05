@@ -113,7 +113,7 @@ def main():
     
     agent, provider = make_agent_loop()
 
-    out = run_once(args.text, db_path=args.db, router=router, agent=agent, provider=provider)
+    out = run_once(args.text, db_path=args.db, router=router, agent=agent, provider=provider, verbose=args.verbose)
     print(out)
 
 if __name__ == "__main__":

@@ -1,32 +1,70 @@
 from __future__ import annotations
-import time, json
-from typing import Any, Dict, Set
+import asyncio, time, json, uuid
+from typing import Any, Dict, List, Tuple
 
 from store.db import Store
 from plans.runner import run_plan_with_nanobot
-from plans.parameterize import parameterize_plan
-from cloud.compiler import compile_plan
-from nanobot_bridge.capabilities import build_capabilities, get_tool_names
 
-_cap_cache: Set[str] | None = None
-_tool_cache: Set[str] | None = None
 
-def _allowed_caps(agent) -> list[str]:
-    """返回可执行的能力列表（仅 tool registry 中的 tool）"""
-    global _cap_cache, _tool_cache
-    if _tool_cache is None:
-        _tool_cache = get_tool_names(agent)
-    _cap_cache = set(_tool_cache)
-    return sorted(_tool_cache)[:180]
+def _run_async(coro):
+    """同步调用 async 协程。"""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                return executor.submit(asyncio.run, coro).result()
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
 
-def _is_valid_tool(agent, cap_name: str) -> bool:
-    """检查 capability 是否存在于 tool registry（不含 skill/mcp）"""
-    global _tool_cache
-    if _tool_cache is None:
-        _tool_cache = get_tool_names(agent)
-    return cap_name in _tool_cache
 
-def run_once(user_text: str, *, db_path: str = "runtime/otta_min.db", router, agent, provider) -> Dict[str, Any]:
+async def _process_and_capture(agent, user_text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """调用 agent.process_direct 并拦截工具调用，用于 golden promotion。
+
+    使用独立 session_key 避免 nanobot 从会话记忆直接回答而跳过工具调用。
+    """
+    captured: List[Dict[str, Any]] = []
+    original_execute = agent.tools.execute
+
+    async def _interceptor(name, arguments):
+        captured.append({
+            "capability": name,
+            "args": dict(arguments) if isinstance(arguments, dict) else {},
+        })
+        return await original_execute(name, arguments)
+
+    agent.tools.execute = _interceptor
+    try:
+        session_key = f"cli:once:{uuid.uuid4().hex[:8]}"
+        response = await agent.process_direct(user_text, session_key=session_key)
+    finally:
+        agent.tools.execute = original_execute
+
+    return response, captured
+
+
+def _templatize_plan(steps: List[Dict], slots: Dict[str, Any]) -> List[Dict]:
+    """将工具调用参数中的具体 slot 值替换回 {{key}} 模板，使 plan 可复用。"""
+    if not slots:
+        return steps
+    raw = json.dumps(steps, ensure_ascii=False)
+    for key, value in slots.items():
+        sv = str(value)
+        if sv:
+            raw = raw.replace(sv, "{{" + key + "}}")
+    return json.loads(raw)
+
+
+def run_once(
+    user_text: str,
+    *,
+    db_path: str = "runtime/otta_min.db",
+    router,
+    agent,
+    provider,
+    verbose: bool = False,
+) -> Dict[str, Any]:
     store = Store(db_path)
     store.init()
 
@@ -34,63 +72,55 @@ def run_once(user_text: str, *, db_path: str = "runtime/otta_min.db", router, ag
     r = router.predict(user_text)
     print("[router]", json.dumps(r, ensure_ascii=False))
 
+    intent = r.get("intent", "unknown")
+
+    # ── 1) block 优先 ──
     if r["route"] == "block" or r["risk"] == "high" or r["need_confirm"]:
-        store.log_run(r["case_key"], "block", "router", False, int((time.time()-t0)*1000), 0, False, "blocked")
+        store.log_run(r["case_key"], "block", "router", False,
+                      int((time.time() - t0) * 1000), 0, False, "blocked",
+                      intent=intent)
         return {"blocked": True, "router": r}
 
     case_key = r["case_key"]
     slots = r.get("slots", {}) or {}
 
-    # golden replay first
+    # ── 2) golden replay（只要没 block 就先查，不看 route） ──
     g = store.get_golden(case_key)
     if g and g.replayable:
-        print(f"[replay] golden hit {case_key} v{g.version}")
+        print(f"[golden] hit {case_key} v{g.version} → replay")
         ok, result, eff, stage = run_plan_with_nanobot(agent, g.plan, slots)
-        store.log_run(case_key, "replay", "golden", ok, int((time.time()-t0)*1000), eff, False, stage)
+        store.log_run(case_key, "golden", "golden", ok,
+                      int((time.time() - t0) * 1000), eff, False, stage,
+                      intent=intent)
         store.touch_golden(case_key)
         if ok:
             store.update_capability_graph_from_plan(g.plan)
-            return {"ok": True, "route":"replay", "result": result}
-        print("[replay_fail] -> cloud", json.dumps(result, ensure_ascii=False))
+            return {"ok": True, "route": "golden", "result": result}
+        print(f"[golden] replay failed → fallback llm")
+    elif g:
+        print(f"[golden] found {case_key} but not replayable → fallback llm")
+    else:
+        print(f"[golden] miss {case_key} → fallback llm")
 
-    # direct as 1-step plan via nanobot
-    if r["route"] == "direct" and r.get("direct_id"):
-        direct_id = r["direct_id"]
-        if _is_valid_tool(agent, direct_id):
-            plan = {"template_id":"direct."+direct_id, "steps":[{"capability": direct_id, "args": slots}], "_risk": r["risk"]}
-            ok, result, eff, stage = run_plan_with_nanobot(agent, plan, slots)
-            store.log_run(case_key, "direct", "direct", ok, int((time.time()-t0)*1000), eff, False, stage)
-            if ok:
-                store.update_capability_graph_from_plan(plan)
-                return {"ok": True, "route":"direct", "result": result}
-            print("[direct_fail] -> cloud", json.dumps(result, ensure_ascii=False))
-        else:
-            print(f"[direct_skip] tool '{direct_id}' not found, falling back to cloud")
+    # ── 3) llm：走 nanobot agent loop（拦截工具调用） ──
+    print("[llm] → nanobot")
+    response, tool_calls = _run_async(_process_and_capture(agent, user_text))
 
-    # cloud compile candidate plan via nanobot provider (with capability whitelist)
-    allowed_caps = _allowed_caps(agent)
-    plan = compile_plan(provider, user_text, case_key, slots, allowed_caps, max_retries=2)
-    template_id = plan.get("template_id","cloud.unknown")
+    ok = bool(response)
+    store.log_run(case_key, "llm", "nanobot", ok,
+                  int((time.time() - t0) * 1000), len(tool_calls), True, "",
+                  intent=intent)
 
-    if template_id == "reject" or plan.get("_risk") == "high":
-        store.log_run(case_key, "block", "cloud_reject", False, int((time.time()-t0)*1000), 0, True, "cloud_reject")
-        return {"ok": False, "route":"block", "error": plan}
+    # ── 4) promote to golden：成功 + 有工具调用 + router 判定 golden ──
+    if ok and tool_calls and r.get("route") == "golden":
+        steps = _templatize_plan(tool_calls, slots)
+        plan = {"template_id": case_key, "steps": steps}
+        store.upsert_golden(case_key, case_key, plan, replayable=1)
+        print(f"[golden] promoted {case_key} ({len(steps)} steps)")
+        print(f"[golden] plan: {json.dumps(plan, ensure_ascii=False)}")
+    elif ok and tool_calls:
+        print(f"[golden] skip promote: route={r.get('route')} (not golden)")
+    elif ok:
+        print(f"[golden] skip promote: no tool calls (pure text response)")
 
-    cid = store.insert_candidate(case_key, template_id, plan)
-    print("[cloud] candidate", cid, template_id)
-
-    ok, result, eff, stage = run_plan_with_nanobot(agent, plan, slots)
-    store.log_run(case_key, "cloud", "candidate", ok, int((time.time()-t0)*1000), eff, True, stage)
-
-    if not ok:
-        store.update_candidate(cid, "invalid", fail_reason=result.get("error",""))
-        return {"ok": False, "route":"cloud", "error": result}
-
-    store.update_candidate(cid, "tried")
-    store.update_capability_graph_from_plan(plan)
-
-    # promote
-    pplan, slots_schema, defaults = parameterize_plan(plan)
-    store.upsert_golden(case_key, template_id, pplan, replayable=1)
-    store.update_candidate(cid, "promoted")
-    return {"ok": True, "route":"cloud", "result": result, "promoted": {"case_key":case_key,"template_id":template_id,"slots_schema":slots_schema}}
+    return {"ok": True, "route": "llm", "result": response}

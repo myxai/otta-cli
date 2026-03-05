@@ -1,10 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "RouterOutputV1",
+  "title": "RouterOutputV4",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "route",
+    "intent",
     "risk",
     "need_confirm",
     "case_key",
@@ -14,10 +15,21 @@
     "route": {
       "type": "string",
       "enum": [
-        "direct",
-        "replay",
-        "cloud",
+        "golden",
+        "llm",
         "block"
+      ]
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "chat",
+        "operate",
+        "fs",
+        "search",
+        "cron",
+        "sys",
+        "unknown"
       ]
     },
     "risk": {
@@ -34,11 +46,6 @@
     "case_key": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 128
-    },
-    "direct_id": {
-      "type": "string",
-      "pattern": "^[a-zA-Z0-9_.\\-]*$",
       "maxLength": 128
     },
     "slots": {

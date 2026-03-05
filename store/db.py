@@ -25,6 +25,16 @@ class Store:
         schema = pathlib.Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
         self.conn.executescript(schema)
         self.conn.commit()
+        self._auto_migrate()
+
+    def _auto_migrate(self):
+        """检测并补齐 v4 新增列（intent），兼容旧库"""
+        cursor = self.conn.execute("PRAGMA table_info(exec_runs)")
+        existing = {row["name"] for row in cursor.fetchall()}
+        for col, typedef in [("intent", "TEXT NOT NULL DEFAULT ''")]:
+            if col not in existing:
+                self.conn.execute(f"ALTER TABLE exec_runs ADD COLUMN {col} {typedef}")
+        self.conn.commit()
 
     def close(self):
         self.conn.close()
@@ -76,11 +86,17 @@ class Store:
         )
         self.conn.commit()
 
-    def log_run(self, case_key: str, route: str, source: str, success: bool, latency_ms: int, effective_steps: int, cloud_called: bool, fail_stage: str=""):
+    def log_run(self, case_key: str, route: str, source: str, success: bool,
+                latency_ms: int, effective_steps: int, cloud_called: bool,
+                fail_stage: str = "", *, intent: str = ""):
         rid = uuid.uuid4().hex
         self.conn.execute(
-            "INSERT INTO exec_runs(run_id,case_key,route,source,success,latency_ms,effective_steps,cloud_called,fail_stage,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (rid, case_key, route, source, 1 if success else 0, latency_ms, effective_steps, 1 if cloud_called else 0, fail_stage, now_iso()),
+            "INSERT INTO exec_runs(run_id,case_key,route,source,success,latency_ms,"
+            "effective_steps,cloud_called,fail_stage,intent,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (rid, case_key, route, source, 1 if success else 0, latency_ms,
+             effective_steps, 1 if cloud_called else 0, fail_stage,
+             intent, now_iso()),
         )
         self.conn.commit()
 

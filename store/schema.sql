@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS exec_runs (
   effective_steps INTEGER NOT NULL DEFAULT 0,
   cloud_called INTEGER NOT NULL DEFAULT 0,
   fail_stage TEXT DEFAULT '',
+  intent TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
 

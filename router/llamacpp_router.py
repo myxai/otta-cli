@@ -1,12 +1,8 @@
 from __future__ import annotations
-import os, subprocess, sys
-from pathlib import Path
+import os, subprocess
 from typing import Any, Dict
 from .json_utils import best_effort_json, validate_router
-
-# 导入统一的 Prompt 管理器
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from train.prompt_manager import PromptManager
+from .prompt_manager import PromptManager
 
 class LlamaCliRouter:
     def __init__(self, llama_cli: str, gguf: str, extra: str = "", verbose: bool = False, cap_file: str = None, topn: int = 60):

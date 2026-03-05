@@ -98,14 +98,14 @@ def main():
                 print(f"统计信息:")
                 print(f"  - 本次会话执行: {exec_count} 次")
                 try:
-                    from store.db import Database
-                    db_obj = Database(args.db)
-                    db_obj.init_schema()
-                    total = db_obj.execute("SELECT COUNT(*) FROM exec_runs").fetchone()[0]
-                    replay = db_obj.execute("SELECT COUNT(*) FROM exec_runs WHERE source='replay'").fetchone()[0]
+                    from store.db import Store
+                    db_obj = Store(args.db)
+                    db_obj.init()
+                    total = db_obj.conn.execute("SELECT COUNT(*) FROM exec_runs").fetchone()[0]
+                    golden = db_obj.conn.execute("SELECT COUNT(*) FROM exec_runs WHERE route='golden'").fetchone()[0]
                     print(f"  - 历史总执行: {total} 次")
                     if total > 0:
-                        print(f"  - 回放率: {replay/total*100:.1f}%")
+                        print(f"  - Golden 回放率: {golden/total*100:.1f}%")
                 except Exception as e:
                     print(f"  - 无法读取历史统计: {e}")
                 continue
@@ -114,7 +114,7 @@ def main():
                 continue
         
         # 执行用户指令
-        out = run_once(s, db_path=args.db, router=router, agent=agent, provider=provider)
+        out = run_once(s, db_path=args.db, router=router, agent=agent, provider=provider, verbose=getattr(args, 'verbose', False))
         exec_count += 1
         
         if out.get("blocked"):

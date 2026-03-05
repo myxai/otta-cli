@@ -1,12 +1,9 @@
 from __future__ import annotations
-import os, json, urllib.request, sys
-from pathlib import Path
+import os, json, urllib.request
+import os, json, urllib.request
 from typing import Any, Dict
 from .json_utils import best_effort_json, validate_router
-
-# 导入统一的 Prompt 管理器
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from train.prompt_manager import PromptManager
+from .prompt_manager import PromptManager
 
 def _post_json(url: str, payload: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
