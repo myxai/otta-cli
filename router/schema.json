@@ -37,7 +37,9 @@
       "maxLength": 128
     },
     "direct_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_.\\-]*$",
+      "maxLength": 128
     },
     "slots": {
       "type": "object",

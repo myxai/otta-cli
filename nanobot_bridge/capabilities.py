@@ -58,3 +58,8 @@ def build_capabilities(agent, workspace: str) -> Dict:
         seen.add(n)
         out.append(c)
     return {"capabilities": out}
+
+
+def get_tool_names(agent) -> set:
+    """返回仅来自 tool registry 的可执行能力名称集合（不含 skill/mcp）"""
+    return {d["name"] for d in _scan_tools(agent)}

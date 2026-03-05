@@ -6,24 +6,25 @@ from store.db import Store
 from plans.runner import run_plan_with_nanobot
 from plans.parameterize import parameterize_plan
 from cloud.compiler import compile_plan
-from nanobot_bridge.capabilities import build_capabilities
+from nanobot_bridge.capabilities import build_capabilities, get_tool_names
 
 _cap_cache: Set[str] | None = None
+_tool_cache: Set[str] | None = None
 
 def _allowed_caps(agent) -> list[str]:
-    global _cap_cache
-    ws = str(getattr(agent, "workspace", "."))
-    caps = build_capabilities(agent, ws)["capabilities"]
-    names = [c["name"] for c in caps]
-    _cap_cache = set(names)
-    return names[:180]
+    """返回可执行的能力列表（仅 tool registry 中的 tool）"""
+    global _cap_cache, _tool_cache
+    if _tool_cache is None:
+        _tool_cache = get_tool_names(agent)
+    _cap_cache = set(_tool_cache)
+    return sorted(_tool_cache)[:180]
 
-def _is_valid_capability(agent, cap_name: str) -> bool:
-    """检查 capability 是否真实存在"""
-    global _cap_cache
-    if _cap_cache is None:
-        _allowed_caps(agent)
-    return cap_name in _cap_cache
+def _is_valid_tool(agent, cap_name: str) -> bool:
+    """检查 capability 是否存在于 tool registry（不含 skill/mcp）"""
+    global _tool_cache
+    if _tool_cache is None:
+        _tool_cache = get_tool_names(agent)
+    return cap_name in _tool_cache
 
 def run_once(user_text: str, *, db_path: str = "runtime/otta_min.db", router, agent, provider) -> Dict[str, Any]:
     store = Store(db_path)
@@ -55,7 +56,7 @@ def run_once(user_text: str, *, db_path: str = "runtime/otta_min.db", router, ag
     # direct as 1-step plan via nanobot
     if r["route"] == "direct" and r.get("direct_id"):
         direct_id = r["direct_id"]
-        if _is_valid_capability(agent, direct_id):
+        if _is_valid_tool(agent, direct_id):
             plan = {"template_id":"direct."+direct_id, "steps":[{"capability": direct_id, "args": slots}], "_risk": r["risk"]}
             ok, result, eff, stage = run_plan_with_nanobot(agent, plan, slots)
             store.log_run(case_key, "direct", "direct", ok, int((time.time()-t0)*1000), eff, False, stage)

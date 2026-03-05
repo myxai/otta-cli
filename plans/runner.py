@@ -14,6 +14,18 @@ def _render(x: Any, slots: Dict[str, Any]) -> Any:
         return [_render(i, slots) for i in x]
     return x
 
+def _tool_registry(agent) -> dict | None:
+    """Best-effort get the tool registry dict from agent."""
+    tools_obj = getattr(agent, "tools", None)
+    if tools_obj is None:
+        return None
+    for attr in ("tools", "_tools", "registry"):
+        m = getattr(tools_obj, attr, None)
+        if isinstance(m, dict):
+            return m
+    return None
+
+
 async def run_plan_with_nanobot_async(agent, plan: Dict[str, Any], slots: Dict[str, Any]) -> Tuple[bool, Dict[str, Any], int, str]:
     """Execute plan steps via nanobot tools.execute() (async version).
 
@@ -26,6 +38,8 @@ async def run_plan_with_nanobot_async(agent, plan: Dict[str, Any], slots: Dict[s
     if not isinstance(steps, list):
         return False, {"error":"invalid_steps"}, 0, "plan"
 
+    registry = _tool_registry(agent)
+
     result: Dict[str, Any] = {}
     eff = 0
     for idx, step in enumerate(steps):
@@ -34,11 +48,14 @@ async def run_plan_with_nanobot_async(agent, plan: Dict[str, Any], slots: Dict[s
         cap = step.get("capability") or step.get("tool")
         if not isinstance(cap, str) or not cap:
             return False, {"error":"missing_capability","step":idx}, eff, f"step{idx}"
+
+        if registry is not None and cap not in registry:
+            return False, {"error":"tool_not_in_registry","capability":cap,"step":idx}, eff, f"step{idx}"
+
         args = _render(step.get("args", {}), slots)
         if not isinstance(args, dict):
             return False, {"error":"args_not_object","step":idx}, eff, f"step{idx}"
         try:
-            # Await the coroutine
             out = await agent.tools.execute(cap, args)
         except Exception as e:
             return False, {"error":"tool_execute_failed","capability":cap,"detail":str(e)}, eff, f"step{idx}"

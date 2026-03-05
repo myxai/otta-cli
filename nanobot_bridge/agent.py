@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 import asyncio
+import inspect
 
 def make_agent_loop():
     """Create a nanobot AgentLoop similarly to otta-dev/app.py but minimal.
@@ -66,14 +67,38 @@ def make_agent_loop():
     )
     return agent, provider
 
+import asyncio
+import inspect
+
 def provider_chat(provider, messages: List[Dict[str, str]], *, max_tokens: int = 800, temperature: float = 0.2) -> str:
-    """Call nanobot provider with best-effort method discovery."""
+    """Call nanobot provider with best-effort method discovery.
+    
+    Handles both sync and async provider methods.
+    """
     # Try common method names
     for name in ["chat", "complete", "completion", "generate", "invoke"]:
         fn = getattr(provider, name, None)
         if callable(fn):
             try:
                 out = fn(messages=messages, max_tokens=max_tokens, temperature=temperature)
+                
+                # Check if result is a coroutine (async function)
+                if inspect.iscoroutine(out):
+                    # Run the coroutine synchronously
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # Already in async context, use thread
+                            import concurrent.futures
+                            with concurrent.futures.ThreadPoolExecutor() as executor:
+                                future = executor.submit(asyncio.run, out)
+                                out = future.result()
+                        else:
+                            out = loop.run_until_complete(out)
+                    except RuntimeError:
+                        # No event loop
+                        out = asyncio.run(out)
+                
                 # out might be dict or str
                 if isinstance(out, str):
                     return out
@@ -96,6 +121,21 @@ def provider_chat(provider, messages: List[Dict[str, str]], *, max_tokens: int =
                 # signature mismatch, try calling with positional
                 try:
                     out = fn(messages)
+                    
+                    # Handle async result
+                    if inspect.iscoroutine(out):
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                import concurrent.futures
+                                with concurrent.futures.ThreadPoolExecutor() as executor:
+                                    future = executor.submit(asyncio.run, out)
+                                    out = future.result()
+                            else:
+                                out = loop.run_until_complete(out)
+                        except RuntimeError:
+                            out = asyncio.run(out)
+                    
                     return out if isinstance(out, str) else str(out)
                 except Exception:
                     continue

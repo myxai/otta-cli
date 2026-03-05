@@ -80,6 +80,20 @@ def main():
         help="llama-cli 可执行文件路径"
     )
 
+    # Capabilities 配置
+    cap_group = ap.add_argument_group("能力列表配置")
+    cap_group.add_argument(
+        "--cap-file",
+        default=None,
+        help="capabilities.json 路径 (也可通过 OTTA_CAP_FILE 环境变量设置)"
+    )
+    cap_group.add_argument(
+        "--cap-topn",
+        type=int,
+        default=None,
+        help="注入到 router prompt 的能力数量上限 (默认: 60)"
+    )
+
     # 调试选项
     ap.add_argument("--verbose", "-v", action="store_true", help="显示路由器的原始输入/输出（用于调试）")
     
