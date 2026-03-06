@@ -114,7 +114,14 @@ def main():
     agent, provider = make_agent_loop()
 
     out = run_once(args.text, db_path=args.db, router=router, agent=agent, provider=provider, verbose=args.verbose)
-    print(out)
+    
+    # 只输出结果，不输出完整的字典结构
+    if out.get("blocked"):
+        print("[已拦截] 高风险操作需要确认")
+    elif out.get("ok"):
+        print(out.get("result"))
+    else:
+        print("[失败]", out)
 
 if __name__ == "__main__":
     main()

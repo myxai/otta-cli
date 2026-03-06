@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio, time, json, uuid
+import asyncio, re, time, json, uuid
 from typing import Any, Dict, List, Tuple
 
 from store.db import Store
@@ -22,17 +22,21 @@ def _run_async(coro):
 async def _process_and_capture(agent, user_text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """调用 agent.process_direct 并拦截工具调用，用于 golden promotion。
 
-    使用独立 session_key 避免 nanobot 从会话记忆直接回答而跳过工具调用。
+    - 使用独立 session_key 避免 nanobot 从会话记忆直接回答而跳过工具调用。
+    - 只捕获执行成功的步骤（过滤 Error 返回）。
     """
     captured: List[Dict[str, Any]] = []
     original_execute = agent.tools.execute
 
     async def _interceptor(name, arguments):
-        captured.append({
-            "capability": name,
-            "args": dict(arguments) if isinstance(arguments, dict) else {},
-        })
-        return await original_execute(name, arguments)
+        result = await original_execute(name, arguments)
+        is_error = isinstance(result, str) and result.startswith("Error")
+        if not is_error:
+            captured.append({
+                "capability": name,
+                "args": dict(arguments) if isinstance(arguments, dict) else {},
+            })
+        return result
 
     agent.tools.execute = _interceptor
     try:
@@ -44,15 +48,42 @@ async def _process_and_capture(agent, user_text: str) -> Tuple[str, List[Dict[st
     return response, captured
 
 
+def _dedup_steps(steps: List[Dict]) -> List[Dict]:
+    """对连续相同 capability 的步骤只保留最后一次（去除 LLM 探索试错）。
+
+    例如 [exec, exec, exec] → 保留最后一个 exec
+    但 [exec, write_file, exec] → 全部保留（不同 capability 交替）
+    """
+    if len(steps) <= 1:
+        return steps
+    result = []
+    for i, step in enumerate(steps):
+        is_last = (i + 1 >= len(steps))
+        next_same = not is_last and steps[i + 1]["capability"] == step["capability"]
+        if not next_same:
+            result.append(step)
+    return result
+
+
 def _templatize_plan(steps: List[Dict], slots: Dict[str, Any]) -> List[Dict]:
-    """将工具调用参数中的具体 slot 值替换回 {{key}} 模板，使 plan 可复用。"""
+    """将工具调用参数中的具体 slot 值替换回 {{key}} 模板，使 plan 可复用。
+
+    对短 slot 值（<=2字符）使用词边界匹配，避免子串误替换
+    （如 "D" 不会把 "PSDrive" 变成 "PS{{drive}}rive"）。
+    """
     if not slots:
         return steps
     raw = json.dumps(steps, ensure_ascii=False)
     for key, value in slots.items():
         sv = str(value)
-        if sv:
-            raw = raw.replace(sv, "{{" + key + "}}")
+        if not sv:
+            continue
+        placeholder = "{{" + key + "}}"
+        if len(sv) <= 2:
+            pattern = r"(?<![a-zA-Z])" + re.escape(sv) + r"(?![a-zA-Z])"
+            raw = re.sub(pattern, placeholder, raw, flags=re.IGNORECASE)
+        else:
+            raw = raw.replace(sv, placeholder)
     return json.loads(raw)
 
 
@@ -88,14 +119,22 @@ def run_once(
     g = store.get_golden(case_key)
     if g and g.replayable:
         print(f"[golden] hit {case_key} v{g.version} → replay")
-        ok, result, eff, stage = run_plan_with_nanobot(agent, g.plan, slots)
+        ok, raw_result, eff, stage = run_plan_with_nanobot(agent, g.plan, slots)
         store.log_run(case_key, "golden", "golden", ok,
                       int((time.time() - t0) * 1000), eff, False, stage,
                       intent=intent)
         store.touch_golden(case_key)
         if ok:
             store.update_capability_graph_from_plan(g.plan)
-            return {"ok": True, "route": "golden", "result": result}
+            print(f"[golden] replay ok")
+            # 提取实际输出内容
+            if isinstance(raw_result, dict) and "output" in raw_result:
+                result_str = raw_result["output"]
+            elif isinstance(raw_result, str):
+                result_str = raw_result
+            else:
+                result_str = str(raw_result)
+            return {"ok": True, "route": "golden", "result": result_str}
         print(f"[golden] replay failed → fallback llm")
     elif g:
         print(f"[golden] found {case_key} but not replayable → fallback llm")
@@ -113,10 +152,11 @@ def run_once(
 
     # ── 4) promote to golden：成功 + 有工具调用 + router 判定 golden ──
     if ok and tool_calls and r.get("route") == "golden":
-        steps = _templatize_plan(tool_calls, slots)
+        effective = _dedup_steps(tool_calls)
+        steps = _templatize_plan(effective, slots)
         plan = {"template_id": case_key, "steps": steps}
         store.upsert_golden(case_key, case_key, plan, replayable=1)
-        print(f"[golden] promoted {case_key} ({len(steps)} steps)")
+        print(f"[golden] promoted {case_key} ({len(tool_calls)} captured → {len(steps)} effective)")
         print(f"[golden] plan: {json.dumps(plan, ensure_ascii=False)}")
     elif ok and tool_calls:
         print(f"[golden] skip promote: route={r.get('route')} (not golden)")

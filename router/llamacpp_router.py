@@ -35,6 +35,18 @@ class LlamaCliRouter:
                 print(f"[router-parse-error] {e}")
             raise
 
+    def chat(self, system_msg: str, user_msg: str, *, max_tokens: int = 512, temperature: float = 0.2) -> str:
+        """通用聊天接口，用于回放总结等场景"""
+        # 构建 ChatML 格式的 prompt
+        prompt = f"<|im_start|>system\n{system_msg}<|im_end|>\n<|im_start|>user\n{user_msg}<|im_end|>\n<|im_start|>assistant\n"
+        
+        cmd = [self.llama_cli, "-m", self.gguf, "-p", prompt, "--n-predict", str(max_tokens), "--temp", str(temperature)]
+        if self.extra:
+            cmd += self.extra.split()
+        
+        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+        return (proc.stdout or "").strip()
+
 def from_env() -> "LlamaCliRouter":
     llama_cli = os.environ.get("OTTA_LLAMA_CLI","").strip()
     gguf = os.environ.get("OTTA_ROUTER_GGUF","").strip()

@@ -99,15 +99,15 @@ def provider_chat(provider, messages: List[Dict[str, str]], *, max_tokens: int =
                         # No event loop
                         out = asyncio.run(out)
                 
-                # out might be dict or str
                 if isinstance(out, str):
                     return out
+                # LLMResponse or similar object with .content
+                if hasattr(out, "content") and isinstance(getattr(out, "content"), str):
+                    return out.content
                 if isinstance(out, dict):
-                    # common keys
                     for k in ["text","content","response","output"]:
                         if k in out and isinstance(out[k], str):
                             return out[k]
-                    # openai-like
                     if "choices" in out:
                         ch = out["choices"][0]
                         if isinstance(ch, dict):
@@ -136,7 +136,11 @@ def provider_chat(provider, messages: List[Dict[str, str]], *, max_tokens: int =
                         except RuntimeError:
                             out = asyncio.run(out)
                     
-                    return out if isinstance(out, str) else str(out)
+                    if isinstance(out, str):
+                        return out
+                    if hasattr(out, "content") and isinstance(getattr(out, "content"), str):
+                        return out.content
+                    return str(out)
                 except Exception:
                     continue
             except Exception:

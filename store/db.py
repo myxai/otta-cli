@@ -70,6 +70,19 @@ class Store:
         self.conn.execute("UPDATE golden_plans SET last_used_at=? WHERE case_key=?", (now_iso(), case_key))
         self.conn.commit()
 
+    def delete_golden(self, case_key: str) -> bool:
+        """删除指定的 golden 记录，返回是否成功"""
+        cursor = self.conn.execute("DELETE FROM golden_plans WHERE case_key=?", (case_key,))
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def list_all_goldens(self):
+        """列出所有 golden 记录"""
+        rows = self.conn.execute(
+            "SELECT case_key, version, template_id, replayable, created_at, last_used_at FROM golden_plans ORDER BY last_used_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def insert_candidate(self, case_key: str, template_id: str, plan: Dict[str, Any]) -> str:
         cid = uuid.uuid4().hex
         self.conn.execute(

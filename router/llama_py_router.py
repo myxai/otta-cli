@@ -44,6 +44,17 @@ class LlamaPythonRouter:
                 print(f"[router-parse-error] {e}")
             raise
 
+    def chat(self, system_msg: str, user_msg: str, *, max_tokens: int = 512, temperature: float = 0.2) -> str:
+        """通用聊天接口，用于回放总结等场景"""
+        # 构建 ChatML 格式的 prompt
+        prompt = f"<|im_start|>system\n{system_msg}<|im_end|>\n<|im_start|>user\n{user_msg}<|im_end|>\n<|im_start|>assistant\n"
+        
+        out = self.llm(prompt, max_tokens=max_tokens, temperature=temperature, stop=["<|im_end|>"])
+        try:
+            return out["choices"][0]["text"].strip()
+        except Exception:
+            return str(out)
+
 def from_env() -> "LlamaPythonRouter":
     gguf = os.environ.get("OTTA_ROUTER_GGUF","").strip()
     if not gguf:

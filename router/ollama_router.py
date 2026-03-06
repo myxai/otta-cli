@@ -48,6 +48,25 @@ class OllamaRouter:
                 print(f"[router-parse-error] {e}")
             raise
 
+    def chat(self, system_msg: str, user_msg: str, *, max_tokens: int = 512, temperature: float = 0.2) -> str:
+        """通用聊天接口，用于回放总结等场景"""
+        # 构建 ChatML 格式的 prompt
+        prompt = f"<|im_start|>system\n{system_msg}<|im_end|>\n<|im_start|>user\n{user_msg}<|im_end|>\n<|im_start|>assistant\n"
+        
+        url = self.base_url + "/api/generate"
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+                "stop": ["<|im_end|>"],
+            },
+        }
+        out = _post_json(url, payload, timeout=int(os.environ.get("OTTA_OLLAMA_TIMEOUT","30")))
+        return out.get("response", "").strip() if isinstance(out, dict) else str(out)
+
 def from_env() -> "OllamaRouter":
     base_url = os.environ.get("OTTA_OLLAMA_URL","http://127.0.0.1:11434").strip()
     model = os.environ.get("OTTA_OLLAMA_MODEL","qwen2.5:0.5b-instruct").strip()
